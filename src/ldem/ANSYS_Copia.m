@@ -136,6 +136,7 @@ zf = zf(:);
 
 tol = 1e-9;  % tolerancia em metros para comparar centros das barras
 cruzaZ = abs(zi - zf) > tol;
+
 % Degrau superior do reparo: Z entre 2 e 3 mm
 Logic1  = (zb <= 2.99*LCO) & (zb >= 1.99*LCO);
 Logic2  = (yb < 46.99*LCO);
@@ -143,7 +144,7 @@ Logic3  = (yb > (47.01+82)*LCO);
 Logic4  = (xb < 10*LCO);
 Logic5  = (xb > 90*LCO);
 Logic17 = (abs(zb - 3.0*LCO) < tol) & cruzaZ;
-Logic18 = (abs(zb - 2.0*LCO) < tol) & cruzaZ;
+
 
 Mask1  = Logic1 & Logic2;
 Mask2  = Logic1 & Logic3;
@@ -153,14 +154,10 @@ Mask14 = Logic17 & Logic2;
 Mask15 = Logic17 & Logic3;
 Mask16 = Logic17 & Logic4;
 Mask17 = Logic17 & Logic5;
-Mask18 = Logic18 & Logic2;
-Mask19 = Logic18 & Logic3;
-Mask20 = Logic18 & Logic4;
-Mask21 = Logic18 & Logic5;
+
 
 MaskReducao1 = Mask1 | Mask2 | Mask3 | Mask4 | ...
-               Mask14 | Mask15 | Mask16 | Mask17 | ...
-               Mask18 | Mask19 | Mask20 | Mask21;
+               Mask14 | Mask15 | Mask16 | Mask17;
 
 % Degrau intermediario: Z entre 1 e 2 mm
 Logic6  = (zb < 1.99*LCO) & (zb > 0.99*LCO);
@@ -168,19 +165,21 @@ Logic7  = (yb < 56.99*LCO);
 Logic8  = (yb > (56.99+62)*LCO);
 Logic9  = (xb < 20*LCO);
 Logic10 = (xb > 80*LCO);
-Logic19 = (abs(zb - 1.0*LCO) < tol) & cruzaZ;
+Logic18 = (abs(zb - 2.0*LCO) < tol) & cruzaZ;
+
 
 Mask5  = Logic6 & Logic7;
 Mask6  = Logic6 & Logic8;
 Mask7  = Logic6 & Logic9;
 Mask8  = Logic6 & Logic10;
-Mask22 = Logic19 & Logic7;
-Mask23 = Logic19 & Logic8;
-Mask24 = Logic19 & Logic9;
-Mask25 = Logic19 & Logic10;
+Mask18 = Logic18 & Logic7;
+Mask19 = Logic18 & Logic8;
+Mask20 = Logic18 & Logic9;
+Mask21 = Logic18 & Logic10;
+
 
 MaskReducao2 = MaskReducao1 | Mask5 | Mask6 | Mask7 | Mask8 | ...
-               Mask22 | Mask23 | Mask24 | Mask25;
+               Mask18 | Mask19 | Mask20 | Mask21;
 
 % Degrau inferior: Z entre 0 e 1 mm
 Logic11 = (zb <= 0.99*LCO);
@@ -188,14 +187,20 @@ Logic12 = (yb < 66.99*LCO);
 Logic13 = (yb > (66.99+42)*LCO);
 Logic14 = (xb < 30*LCO);
 Logic15 = (xb > 70*LCO);
+Logic19 = (abs(zb - 1.0*LCO) < tol) & cruzaZ;
 
 Mask9  = Logic11 & Logic12;
 Mask10 = Logic11 & Logic13;
 Mask11 = Logic11 & Logic14;
 Mask12 = Logic11 & Logic15;
+Mask22 = Logic19 & Logic12;
+Mask23 = Logic19 & Logic13;
+Mask24 = Logic19 & Logic14;
+Mask25 = Logic19 & Logic15;
 
 % Exatamente a mesma uniao de barras enfraquecidas do main1.m.
-MaskReducao = MaskReducao2 | Mask9 | Mask10 | Mask11 | Mask12;
+MaskReducao = MaskReducao2 | Mask9 | Mask10 | Mask11 | Mask12|...
+                Mask22 | Mask23 | Mask24 | Mask25;
 
 % Classificacao exclusiva: a prioridade e das barras enfraquecidas.
 % Isso inclui barras externas com centro em Z=3 mm, que cruzam a interface.
