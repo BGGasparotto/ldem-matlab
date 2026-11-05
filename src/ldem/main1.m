@@ -285,6 +285,45 @@ disp(size(zi))
 disp(size(zf))
 disp(size(Logic17))
 
+% =====================================================
+% FIBRAS DE REFORCO - TRES CAMADAS
+% =====================================================
+
+Ef = 7.24E10;
+
+tolRel = 1e-8;
+
+x = xb/LCO;
+y = yb/LCO;
+z = zb/LCO;
+
+% Tres planos das fibras
+MaskPlano05 = abs(z - 0.5) < tolRel;
+MaskPlano15 = abs(z - 1.5) < tolRel;
+MaskPlano25 = abs(z - 2.5) < tolRel;
+
+MaskPlanosFibra = MaskPlano05 | MaskPlano15 | MaskPlano25;
+
+% Coordenadas inteiras
+xInteiro = abs(x - round(x)) < tolRel;
+yInteiro = abs(y - round(y)) < tolRel;
+
+% Coordenadas semi-inteiras
+xMeio = abs(x - (floor(x) + 0.5)) < tolRel;
+yMeio = abs(y - (floor(y) + 0.5)) < tolRel;
+
+% Fibras nas direcoes X e Y
+MaskFibraX = MaskPlanosFibra & xMeio & yInteiro;
+MaskFibraY = MaskPlanosFibra & xInteiro & yMeio;
+
+% Excluir regioes eliminadas
+Mask26 = (MaskFibraX | MaskFibraY) & ~MaskReducao;
+
+% Propriedades elasticas das fibras
+% O modulo do epoxi ja foi atribuido anteriormente
+E1(Mask26) = (Ef/EMAR)*E1(Mask26);
+E2(Mask26) = (Ef/EMAR)*E2(Mask26);
+
 %ROHm=1500;
 %ROHmr=(0.4/3)*ROHm;
 %MAS(Mask13)=(RHOmr/ROH)*MAS(Mask13);

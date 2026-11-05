@@ -15,19 +15,10 @@ global STRAIN STRESS  DM DS
 %==========================================================================
 fprintf(IFILE, '/PREP7\n');
 fprintf(IFILE, '/TITLE, TEMPO =%g\n', TIME);
-fprintf(IFILE, 'ET,1,4\n');
-fprintf(IFILE, 'ET,2,4\n');
-fprintf(IFILE, 'ET,3,4\n');
-fprintf(IFILE, 'ET,4,4\n');
-fprintf(IFILE, 'ET,5,4\n');
-fprintf(IFILE, 'ET,6,4\n');
-fprintf(IFILE, 'ET,7,4\n');
-fprintf(IFILE, 'ET,8,4\n');
-fprintf(IFILE, 'ET,9,4\n');
-fprintf(IFILE, 'ET,10,4\n');
-fprintf(IFILE, 'ET,11,4\n');
-fprintf(IFILE, 'ET,12,4\n');
-fprintf(IFILE, 'ET,13,4\n');
+% LINK4: TYPE=1 temporario; 2=aco; 3=epoxi; 4=fibras; 5=regioes enfraquecidas.
+for tipo = 1:5
+    fprintf(IFILE, 'ET,%d,4\n', tipo);
+end
 fprintf(IFILE, 'MP,EX,1,2E10\n');
 fprintf(IFILE, 'MP,PRXY,1,0.25\n');
 fprintf(IFILE, 'MP,DENS,1,2500\n');
@@ -58,57 +49,21 @@ CONT5 = 0;
 CONT6 = 0;
 CONT7 = 0;
 
-fprintf(1, '%d %d\n', DM(1), FS(1));
-
+% Na criacao todos os elementos sao temporariamente TYPE=1.
+% O TYPE definitivo sera atribuido pelas mascaras geometricas abaixo.
+% As contagens DM/FS originais continuam independentes dos tipos geometricos.
+fprintf(IFILE, 'TYPE,1\n');
 for I = 1:NBT
-    NOI = CN(2*I - 1);
-    NOF = CN(2*I);
-
     if DM(I)
-        % --- intact bars (not yet damaged) ------------------------------
-        fprintf(IFILE, 'TYPE,1\n');
-        fprintf(IFILE, 'E,%d,%d,!EL%d\n', CN(2*I-1), CN(2*I), I);    
         CONT1 = CONT1 + 1;
-
     elseif FS(I)
-        % --- damaged bars (orange) --------------------------------------
-        fprintf(IFILE, 'TYPE,2\n');
-        fprintf(IFILE, 'E,%d,%d,!EL%d\n', CN(2*I-1), CN(2*I), I);
         CONT2 = CONT2 + 1;
-
     else
-        % --- broken bars (red) ------------------------------------------
-        fprintf(IFILE, 'TYPE,5\n');
-        fprintf(IFILE, 'E,%d,%d,!EL%d\n', CN(2*I-1), CN(2*I), I);
         CONT5 = CONT5 + 1;
-    
     end
+    fprintf(IFILE, 'E,%d,%d,!EL%d\n', CN(2*I-1), CN(2*I), I);
 end
-
 fprintf(IFILE, '\n');
-fprintf(IFILE, '!CORES DOS ELEMENTOS\n');
-
-%--------------------------------------------------------------------------
-% ELEMENT COLORS (per TYPE)
-%--------------------------------------------------------------------------
-fprintf(IFILE, 'ESEL,S,TYPE,,1\n');
-fprintf(IFILE, '/COLOR,ELEM,GCYA\n');
-fprintf(IFILE, '/PNUM,TYPE,0\n');
-fprintf(IFILE, '/NUMBER,1\n');
-fprintf(IFILE, 'ESEL,ALL\n');
-
-fprintf(IFILE, 'ESEL,S,TYPE,,2\n');
-fprintf(IFILE, '/COLOR,ELEM,ORAN\n');
-fprintf(IFILE, '/PNUM,TYPE,0\n');
-fprintf(IFILE, '/NUMBER,1\n');
-fprintf(IFILE, 'ESEL,ALL\n');
-
-fprintf(IFILE, 'ESEL,S,TYPE,,5\n');
-fprintf(IFILE, '/COLOR,ELEM,RED\n');
-fprintf(IFILE, '/PNUM,TYPE,0\n');
-fprintf(IFILE, '/NUMBER,1\n');
-fprintf(IFILE, 'ESEL,ALL\n');
-
 
 %==========================================================================
 % REGIOES GEOMETRICAS - MESMAS MASCARAS DO MAIN1.M
@@ -202,41 +157,84 @@ Mask25 = Logic19 & Logic15;
 MaskReducao = MaskReducao2 | Mask9 | Mask10 | Mask11 | Mask12|...
                 Mask22 | Mask23 | Mask24 | Mask25;
 
-% Classificacao exclusiva: a prioridade e das barras enfraquecidas.
-% Isso inclui barras externas com centro em Z=3 mm, que cruzam a interface.
+% ========================================================================
+% FIBRAS NAS TRES CAMADAS DO REPARO
+% Centros das fibras: Z/LCO = 0.5, 1.5 e 2.5
+% Direcao X: centro x semi-inteiro e y inteiro
+% Direcao Y: centro x inteiro e y semi-inteiro
+% Os centros (x,y) inteiros em ambas as coordenadas nao sao fibras.
+% ========================================================================
+tolRel = 1e-8;
+x = xb/LCO;
+y = yb/LCO;
+z = zb/LCO;
+
+% Selecionar os centros nas tres cotas das fibras.
+MaskPlano05 = abs(z - 0.5) < tolRel;
+MaskPlano15 = abs(z - 1.5) < tolRel;
+MaskPlano25 = abs(z - 2.5) < tolRel;
+MaskPlanosFibra = MaskPlano05 | MaskPlano15 | MaskPlano25;
+
+% Geometria dos centros nas direcoes X e Y.
+xInteiro = abs(x - round(x)) < tolRel;
+yInteiro = abs(y - round(y)) < tolRel;
+xMeio = abs(x - (floor(x) + 0.5)) < tolRel;
+yMeio = abs(y - (floor(y) + 0.5)) < tolRel;
+
+% Mesma selecao de fibra para cada plano.
+MaskFibraX = MaskPlanosFibra & xMeio & yInteiro;
+MaskFibraY = MaskPlanosFibra & xInteiro & yMeio;
+
+% Regioes enfraquecidas prevalecem sobre as fibras.
 MaskEliminadas = MaskReducao;
-MaskAco       = (zb >= 3*LCO) & ~MaskEliminadas;
-MaskMatriz    = (zb <  3*LCO) & ~MaskEliminadas;
+MaskFibras = (MaskFibraX | MaskFibraY) & ~MaskEliminadas;
+MaskAco = (zb >= 3*LCO) & ~MaskEliminadas & ~MaskFibras;
+MaskMatriz = (zb < 3*LCO) & ~MaskEliminadas & ~MaskFibras;
 
-assert(numel(MaskEliminadas)==NBT && numel(MaskAco)==NBT && ...
-       numel(MaskMatriz)==NBT, 'Dimensoes das mascaras incompatíveis com NBT');
-assert(all((double(MaskEliminadas)+double(MaskAco)+double(MaskMatriz))==1), ...
-       'Ha barras sem classificacao ou com classificacao duplicada');
+% Verificar que cada barra esta classificada em exatamente um grupo.
+assert(numel(MaskEliminadas)==NBT && numel(MaskFibras)==NBT && ...
+       numel(MaskAco)==NBT && numel(MaskMatriz)==NBT, ...
+       'Dimensoes das mascaras incompatíveis com NBT');
+assert(all((double(MaskEliminadas) + double(MaskFibras) + ...
+            double(MaskAco) + double(MaskMatriz)) == 1), ...
+       'Barras sem classificacao ou classificadas em mais de uma regiao');
 
-fprintf('Matriz: %d barras\n', nnz(MaskMatriz));
-fprintf('Aco: %d barras\n', nnz(MaskAco));
-fprintf('Enfraquecidas: %d barras\n', nnz(MaskEliminadas));
+fprintf('Aco (TYPE=2): %d barras\n', nnz(MaskAco));
+fprintf('Matriz (TYPE=3): %d barras\n', nnz(MaskMatriz));
+fprintf('Fibras X (TYPE=4): %d barras\n', nnz(MaskFibraX & MaskFibras));
+fprintf('Fibras Y (TYPE=4): %d barras\n', nnz(MaskFibraY & MaskFibras));
+fprintf('Fibras em Z=0.5*LCO: %d barras\n', nnz(MaskPlano05 & MaskFibras));
+fprintf('Fibras em Z=1.5*LCO: %d barras\n', nnz(MaskPlano15 & MaskFibras));
+fprintf('Fibras em Z=2.5*LCO: %d barras\n', nnz(MaskPlano25 & MaskFibras));
+fprintf('Enfraquecidas (TYPE=5): %d barras\n', nnz(MaskEliminadas));
 
+% ==========================================================
+% TIPOS DOS ELEMENTOS NO ANSYS
+% ==========================================================
 TIPOBARRA = zeros(NBT,1);
-TIPOBARRA(MaskMatriz)     = 6;
-TIPOBARRA(MaskAco)        = 13;
-TIPOBARRA(MaskEliminadas) = 8;
+TIPOBARRA(MaskAco)        = 2;  % Amarelo
+TIPOBARRA(MaskMatriz)     = 3;  % Verde
+TIPOBARRA(MaskFibras)     = 4;  % Vermelho
+TIPOBARRA(MaskEliminadas) = 5;  % Cinza
+assert(all(TIPOBARRA >= 2 & TIPOBARRA <= 5), 'TIPOBARRA contem valores invalidos');
 
-% IDs de elementos correspondem a ordem de criacao E no laco anterior.
+% Elementos sao numerados na ordem de criacao (I = 1:NBT).
 for I = 1:NBT
     fprintf(IFILE, 'EMODIF,%d,TYPE,%d\n', I, TIPOBARRA(I));
 end
 fprintf(IFILE, 'ALLSEL,ALL\n');
 
-% Cores de referencia para os tipos das regioes.
-fprintf(IFILE, 'ESEL,S,TYPE,,6\n');
-fprintf(IFILE, '/COLOR,ELEM,GREE\n');
-fprintf(IFILE, 'ALLSEL,ALL\n');
-fprintf(IFILE, 'ESEL,S,TYPE,,13\n');
-fprintf(IFILE, '/COLOR,ELEM,BLUE\n');
-fprintf(IFILE, 'ALLSEL,ALL\n');
-fprintf(IFILE, 'ESEL,S,TYPE,,8\n');
-fprintf(IFILE, '/COLOR,ELEM,RED\n');
+% ==========================================================
+% COLORIR POR TIPO (nao por selecao momentanea de elementos)
+% /PNUM,TYPE,1 ativa cores por TYPE; /NUMBER,1 oculta numeros.
+% /COLOR,NUM define a cor do numero de tipo em cada mapa discreto.
+% ==========================================================
+fprintf(IFILE, '/COLOR,NUM,YELL,2\n'); % Aco
+fprintf(IFILE, '/COLOR,NUM,GREE,3\n'); % Matriz
+fprintf(IFILE, '/COLOR,NUM,RED,4\n');  % Fibras
+fprintf(IFILE, '/COLOR,NUM,LGRA,5\n'); % Enfraquecidas
+fprintf(IFILE, '/PNUM,TYPE,1\n');
+fprintf(IFILE, '/NUMBER,1\n');
 fprintf(IFILE, 'ALLSEL,ALL\n');
 
 %@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
