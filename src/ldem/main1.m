@@ -87,6 +87,171 @@ ini=BOUND()% !
 %       CALL NODMASS
 ini=NODMASS()% !
 'ini=NODMASS()'
+% ========================================================================
+% MASSAS NODAIS - ACO, MATRIZ E REGIOES ENFRAQUECIDAS (VAZIOS)
+% ========================================================================
+% A NODMASS() calculou inicialmente a massa de um prisma todo de aco.
+% Aqui, reconstruimos as massas por celulas de dimensao LCO x LCO x LCO.
+%
+% Hipotese da discretizacao LDEM: cada celula possui 8 nos de vertices
+% e 1 no central. Metade da massa fica no centro e metade e repartida
+% igualmente entre os 8 vertices (mCel/16 para cada vertice).
+%
+% IMPORTANTE: a massa equivalente das fibras ainda NAO foi adicionada.
+% As barras da fissura tambem nao representam remocao de volume aqui.
+% ========================================================================
+
+MassaOriginal = sum(MAS(1:NNT));
+
+rhoAco   = ROH;                    % kg/m3 - aco
+ROHm     = 1500;                   % kg/m3 - epoxi real
+ROHmr    = (0.4/3)*ROHm;           % kg/m3 - epoxi equivalente
+rhoVazio = 1.E-5*rhoAco;          % kg/m3 - massa residual numerica
+
+% Numero de celulas (nao de nos)
+nx = M-1;
+ny = N-1;
+nz = L-1;
+
+assert(nx > 0 && ny > 0 && nz > 0, ...
+    'Dimensoes da malha invalidas');
+assert(NNT == (nx+1)*(ny+1)*(nz+1) + nx*ny*nz, ...
+    'A malha nao corresponde a vertices + centros de celulas');
+assert(numel(MAS) >= NNT, 'Vetor MAS menor que NNT');
+
+% Centros das celulas, em unidades de LCO
+[Xc,Yc,Zc] = ndgrid(0.5:(nx-0.5), ...
+                     0.5:(ny-0.5), ...
+                     0.5:(nz-0.5));
+
+% Inicialmente todo o volume e tratado como vazio
+rhoCel = rhoVazio*ones(nx,ny,nz);
+
+% Placa continua de aco: Z = 3 a 6 mm
+MaskAcoCel = (Zc >= 3);
+rhoCel(MaskAcoCel) = rhoAco;
+
+% Camada inferior do reparo: Z = 0 a 1 mm; X = 30..70; Y = 67..109
+Regiao1Cel = (Zc < 1) & ...
+             (Xc >= 30) & (Xc < 70) & ...
+             (Yc >= 67) & (Yc < 109);
+
+% Camada intermediaria: Z = 1 a 2 mm; X = 20..80; Y = 57..119
+Regiao2Cel = (Zc >= 1) & (Zc < 2) & ...
+             (Xc >= 20) & (Xc < 80) & ...
+             (Yc >= 57) & (Yc < 119);
+
+% Camada superior: Z = 2 a 3 mm; X = 10..90; Y = 47..129
+Regiao3Cel = (Zc >= 2) & (Zc < 3) & ...
+             (Xc >= 10) & (Xc < 90) & ...
+             (Yc >= 47) & (Yc < 129);
+
+MaskEpoxiCel = Regiao1Cel | Regiao2Cel | Regiao3Cel;
+assert(~any(MaskAcoCel(:) & MaskEpoxiCel(:)), ...
+    'Sobreposicao entre celulas de aco e epoxi');
+rhoCel(MaskEpoxiCel) = ROHmr;
+
+% Massa total da celula
+mCel = rhoCel*LCO^3;
+
+% Coordenadas nominais dos nos, normalizadas por LCO
+xnM = U0(1:NNT); xnM = xnM(:)/LCO;
+ynM = V0(1:NNT); ynM = ynM(:)/LCO;
+znM = W0(1:NNT); znM = znM(:)/LCO;
+
+tolRelMassa = 1e-6;
+
+% Nos de vertices em (i, j, k)
+MaskVertice = ...
+    (abs(xnM-round(xnM)) < tolRelMassa) & ...
+    (abs(ynM-round(ynM)) < tolRelMassa) & ...
+    (abs(znM-round(znM)) < tolRelMassa);
+
+% Nos centrais em (i+0.5, j+0.5, k+0.5)
+MaskCentro = ...
+    (abs(xnM-(floor(xnM)+0.5)) < tolRelMassa) & ...
+    (abs(ynM-(floor(ynM)+0.5)) < tolRelMassa) & ...
+    (abs(znM-(floor(znM)+0.5)) < tolRelMassa);
+
+assert(all(MaskVertice | MaskCentro) && ...
+       ~any(MaskVertice & MaskCentro), ...
+    'Existem nos fora dos vertices/centros esperados');
+assert(nnz(MaskCentro) == nx*ny*nz, ...
+    'Numero de nos centrais incorreto');
+assert(nnz(MaskVertice) == (nx+1)*(ny+1)*(nz+1), ...
+    'Numero de nos de vertices incorreto');
+
+% Construir mapa de identificadores dos vertices
+idV = zeros(nx+1,ny+1,nz+1,'uint32');
+nosV = find(MaskVertice);
+indV = sub2ind(size(idV), ...
+    round(xnM(nosV))+1, ...
+    round(ynM(nosV))+1, ...
+    round(znM(nosV))+1);
+idV(indV) = uint32(nosV);
+
+% Construir mapa de identificadores dos centros
+idC = zeros(nx,ny,nz,'uint32');
+nosC = find(MaskCentro);
+indC = sub2ind(size(idC), ...
+    floor(xnM(nosC))+1, ...
+    floor(ynM(nosC))+1, ...
+    floor(znM(nosC))+1);
+idC(indC) = uint32(nosC);
+
+assert(all(idV(:)>0) && all(idC(:)>0), ...
+    'Mapa de identificadores dos nos incompleto');
+
+% Montagem das novas massas nodais
+MASnova = zeros(NNT,1);
+
+% 50% da massa em cada no central
+MASnova(double(idC(:))) = 0.5*mCel(:);
+
+% Outros 50% igualmente divididos entre os oito vertices
+for dx = 0:1
+    for dy = 0:1
+        for dz = 0:1
+            ids = idV(1+dx:nx+dx, ...
+                      1+dy:ny+dy, ...
+                      1+dz:nz+dz);
+            ids = double(ids(:));
+            MASnova(ids) = MASnova(ids) + mCel(:)/16;
+        end
+    end
+end
+
+% Verificar conservacao da massa
+MassaTeorica = sum(mCel(:));
+MassaNova = sum(MASnova);
+
+assert(all(isfinite(MASnova)) && all(MASnova > 0), ...
+    'Massas nodais nao positivas ou invalidas');
+assert(abs(MassaNova-MassaTeorica) < 1e-10, ...
+    'Massa nodal e massa volumetrica nao coincidem');
+
+% Aplicar massa corrigida (SEM aplicar a correcao nodal antiga)
+MAS(1:NNT) = MASnova;
+
+fprintf('\n===== MASSA CORRIGIDA POR CELULAS =====\n');
+fprintf('Nos centrais: %d | Nos de vertices: %d\n', ...
+        nnz(MaskCentro),nnz(MaskVertice));
+fprintf('Celulas de aco: %d\n', nnz(MaskAcoCel));
+fprintf('Celulas de epoxi: %d\n', nnz(MaskEpoxiCel));
+fprintf('Celulas vazias: %d\n', ...
+        numel(rhoCel)-nnz(MaskAcoCel)-nnz(MaskEpoxiCel));
+fprintf('Massa original: %.9f kg\n', MassaOriginal);
+fprintf('Massa teorica: %.9f kg\n', MassaTeorica);
+fprintf('Massa nodal corrigida: %.9f kg\n', sum(MAS(1:NNT)));
+fprintf('Massa retirada: %.9f kg\n', MassaOriginal-MassaNova);
+
+% Evita manter grandes matrizes auxiliares na memoria para a integracao
+clear Xc Yc Zc rhoCel mCel idV idC MASnova
+clear xnM ynM znM MaskVertice MaskCentro
+clear nosV nosC indV indC MaskAcoCel MaskEpoxiCel
+clear Regiao1Cel Regiao2Cel Regiao3Cel
+
+
 % !
 % !     CONECTI ----> Gera conectividades das barras
 %       CALL CONECTI
@@ -324,10 +489,51 @@ Mask26 = (MaskFibraX | MaskFibraY) & ~MaskReducao;
 E1(Mask26) = (Ef/EMAR)*E1(Mask26);
 E2(Mask26) = (Ef/EMAR)*E2(Mask26);
 
-%ROHm=1500;
-%ROHmr=(0.4/3)*ROHm;
-%MAS(Mask13)=(RHOmr/ROH)*MAS(Mask13);
+% =====================================================
+% INTRODUCAO DA FISSURA NO ACO
+% =====================================================
 
+% Comprimento da fissura
+a = 39*LCO;
+
+% Inclinacao em graus
+theta = 45;
+
+% Coordenadas do centro da fissura
+xg = 50*LCO;
+yg = 88*LCO;
+
+% Extremidades da fissura
+xmin = xg - (a/2)*cosd(theta);
+xmax = xg + (a/2)*cosd(theta);
+
+ymin = yg - (a/2)*sind(theta);
+ymax = yg + (a/2)*sind(theta);
+
+% Somente barras pertencentes ao aco
+Logic20 = (zb >= 3*LCO);
+
+% Barras entre xmin e xmax
+Logic21 = (xb > xmin) & (xb < xmax);
+
+% Equacao da reta central da fissura
+yReta = ymin + (xb - xmin)*tand(theta);
+
+% Faixa de 2*LCO na direcao Y
+Logic22 = (yb > yReta - 1*LCO) & ...
+          (yb < yReta + 1*LCO);
+
+% Selecao final
+MaskFissura = Logic20 & Logic21 & Logic22;
+
+% Reducao da rigidez
+EP(MaskFissura) = 1.E-5 * EP(MaskFissura);
+
+% Conferencia
+fprintf('Barras da fissura: %d\n', nnz(MaskFissura));
+
+% A massa da matriz, do aco e dos vazios ja foi corrigida acima,
+% imediatamente apos NODMASS(). Nao repetir correcao nodal aqui.
 
 % !
 %       IF (OU2.GT.0)&
@@ -422,7 +628,6 @@ ARMANS{III} = strtrim(fgetl(fid_AN1));   % lê uma linha e remove espaços
      'ini=ANSYS'
    fclose(fid_AN1);
 end
-return
 
 % 
 % !--------------------------------------------------------------------------
@@ -489,8 +694,67 @@ return
 % !  calculadas em CABAR e com a configuração do sistema nos dois tempos
 % !  anteriores e determina-se a configuração no tempo novo.
 % !
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+% =====================================================
+% MASSA POR PLANO Z - INCLUINDO NOS CENTRAIS
+% =====================================================
+
+fprintf('\n===== MASSA POR PLANO Z =====\n');
+
+zn = W0(1:NNT);
+zn = zn(:);
+
+mnos = MAS(1:NNT);
+mnos = mnos(:);
+
+tolZ = 1e-9;
+
+for k = 0:12
+
+    zPlano = 0.5*k*LCO;
+
+    MaskPlano = abs(zn-zPlano) < tolZ;
+
+    MassaPlano = sum(mnos(MaskPlano));
+
+    fprintf('Z = %.1f mm | Nos = %d | Massa = %.8f kg\n', ...
+        0.5*k, nnz(MaskPlano), MassaPlano);
+
+end
+
+fprintf('\nMassa total = %.8f kg\n', sum(mnos));
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% =====================================================
+% CONFERENCIA ANTES DA INTEGRACAO
+% =====================================================
+
+fprintf('\n===== VERIFICACAO INICIAL =====\n');
+
+fprintf('Nos: %d\n', NNT);
+fprintf('Barras: %d\n', NBT);
+
+fprintf('Nos restringidos em X: %d\n', nnz(BDX));
+fprintf('Nos restringidos em Y: %d\n', nnz(BDY));
+fprintf('Nos restringidos em Z: %d\n', nnz(BDZ));
+
+fprintf('Massa total: %.8e kg\n', sum(MAS(:)));
+
+fprintf('DT: %.8e s\n', DT);
+fprintf('TTOT: %.8e s\n', TTOT);
+fprintf('NSTEP original: %d\n', NSTEP);
+
+assert(all(isfinite(MAS(:))), ...
+    'Existem massas nodais invalidas');
+
+assert(all(isfinite(EP(1:NBT))), ...
+    'Existem propriedades EP invalidas');
+
+% Teste inicial com apenas 10 passos
+% NSTEP = min(NSTEP,10);
+
+fprintf('NSTEP para teste: %d\n', NSTEP);
+return
 % -------------------------------------------------------------------------
 % MODEL ASSEMBLY COMPLETE. START STEP-BY-STEP INTEGRATION
 % -------------------------------------------------------------------------
@@ -698,6 +962,7 @@ fprintf('\n');
 %if fid12 >= 0, fclose(fid12); end
 
 % End of program Console1
+
 
 
 
